@@ -1,6 +1,5 @@
 use std::str;
 
-// Convert hex string to bytes
 fn hex_to_bytes(hex: &str) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(hex.len() / 2);
     for i in (0..hex.len()).step_by(2) {
@@ -10,9 +9,12 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
     bytes
 }
 
-// XOR decryption function
 fn xor_decrypt(ciphertext: &[u8], key: &[u8]) -> Vec<u8> {
-    ciphertext.iter().zip(key.iter().cycle()).map(|(&c, &k)| c ^ k).collect()
+    ciphertext
+        .iter()
+        .zip(key.iter().cycle())
+        .map(|(&c, &k)| c ^ k)
+        .collect()
 }
 
 fn main() {
@@ -29,40 +31,38 @@ fn main() {
         "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     ];
 
-    // Determine the length of the longest ciphertext to infer the key length
-    let max_length = ciphertexts.iter().map(|c| c.len()).max().unwrap() / 2;
-    let mut key = vec![0u8; max_length];
-
-    // Common English characters ordered by frequency
-    let common_chars = vec![b' ', b'e', b't', b'a', b'o', b'i', b'n', b's', b'h', b'r'];
+    let max_length = ciphertexts.iter().map(|c| c.len()).max().unwrap();
+    let mut key = vec![0; max_length];
 
     for i in 0..max_length {
-        let mut frequency = [0u32; 256];
+        let mut frequency_map = vec![0; 128];
+
+        // Iterate over each ciphertext
         for ct in &ciphertexts {
             let bytes = hex_to_bytes(ct);
             if i < bytes.len() {
-                frequency[bytes[i] as usize] += 1;
+                // Increment the frequency count for each byte XORed with a possible key byte
+                for key_byte in 0..=127 {
+                    let decrypted_byte = bytes[i] ^ key_byte as u8;
+                    if decrypted_byte.is_ascii_alphabetic() || decrypted_byte.is_ascii_whitespace()
+                    {
+                        frequency_map[key_byte as usize] += 1;
+                    }
+                }
             }
         }
+        let best_key_byte = frequency_map
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, &count)| count)
+            .unwrap()
+            .0 as u8;
 
-        // Determine the most likely key byte by trying common characters
-        for &common_char in &common_chars {
-            let likely_byte = frequency.iter().enumerate().max_by_key(|&(_, &count)| count).unwrap().0 as u8;
-            key[i] = likely_byte ^ common_char;
-            let decrypted = ciphertexts.iter().map(|ct| {
-                let ciphertext_bytes = hex_to_bytes(ct);
-                xor_decrypt(&ciphertext_bytes, &key)
-            }).collect::<Vec<_>>();
-
-            // Check if the decrypted text looks plausible (contains valid UTF-8 sequences)
-            if decrypted.iter().all(|d| str::from_utf8(d).is_ok()) {
-                break;
-            }
-        }
+        key[i] = best_key_byte;
     }
 
     // Decrypt all ciphertexts using the derived key
-    for ct in ciphertexts {
+    for ct in &ciphertexts {
         let ciphertext_bytes = hex_to_bytes(ct);
         let plaintext_bytes = xor_decrypt(&ciphertext_bytes, &key);
         let plaintext = str::from_utf8(&plaintext_bytes).unwrap_or("<invalid utf-8>");
