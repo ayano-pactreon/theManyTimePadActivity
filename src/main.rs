@@ -1,23 +1,8 @@
 use std::str;
-
-// Convert hex string to bytes
-fn hex_to_bytes(hex: &str) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for i in (0..hex.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex[i..i + 2], 16).expect("Invalid hex string");
-        bytes.push(byte);
-    }
-    bytes
-}
-
-// XOR decryption function
-fn xor_decrypt(ciphertext: &[u8], key: &[u8]) -> Vec<u8> {
-    ciphertext.iter().zip(key.iter().cycle()).map(|(&c, &k)| c ^ k).collect()
-}
+use hex::decode;
 
 fn main() {
-    // Provided ciphertexts
-    let ciphertexts = vec![
+    let hex_ciphertexts = vec![
         "160111433b00035f536110435a380402561240555c526e1c0e431300091e4f04451d1d490d1c49010d000a0a4510111100000d434202081f0755034f13031600030d0204040e",
         "050602061d07035f4e3553501400004c1e4f1f01451359540c5804110c1c47560a1415491b06454f0e45040816431b144f0f4900450d1501094c1b16550f0b4e151e03031b450b4e020c1a124f020a0a4d09071f16003a0e5011114501494e16551049021011114c291236520108541801174b03411e1d124554284e141a0a1804045241190d543c00075453020a044e134f540a174f1d080444084e01491a090b0a1b4103570740",
         "000000000000001a49320017071704185941034504524b1b1d40500a0352441f021b0708034e4d0008451c40450101064f071d1000100201015003061b0b444c00020b1a16470a4e051a4e114f1f410e08040554154f064f410c1c00180c0010000b0f5216060605165515520e09560e00064514411304094c1d0c411507001a1b45064f570b11480d001d4c134f060047541b185c",
@@ -26,46 +11,42 @@ fn main() {
         "0b4916060808001a542e0002101309050345500b00050d04005e030c071b4c1f111b161a4f01500a08490b0b451604520d0b1d1445060f531c48124f1305014c051f4c001100262d38490f0b4450061800004e001b451b1d594e45411d014e004801491b0b0602050d41041e0a4d53000d0c411c41111c184e130a0015014f03000c1148571d1c011c55034f12030d4e0b45150c5c",
         "011b0d131b060d4f5233451e161b001f59411c090a0548104f431f0b48115505111d17000e02000a1e430d0d0b04115e4f190017480c14074855040a071f4448001a050110001b014c1a07024e5014094d0a1c541052110e54074541100601014e101a5c",
         "0c06004316061b48002a4509065e45221654501c0a075f540c42190b165c",
-        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
     ];
 
-    // Determine the length of the longest ciphertext to infer the key length
-    let max_length = ciphertexts.iter().map(|c| c.len()).max().unwrap() / 2;
-    let mut key = vec![0u8; max_length];
+    // Decode hex to bytes
+    let mut ciphertexts: Vec<Vec<u8>> = Vec::new();
+    for hex_ciphertext in hex_ciphertexts {
+        let bytes = decode(hex_ciphertext).expect("Invalid hex string");
+        ciphertexts.push(bytes);
+    }
 
-    // Common English characters ordered by frequency
-    let common_chars = vec![b' ', b'e', b't', b'a', b'o', b'i', b'n', b's', b'h', b'r'];
+    // Determine the length of the longest ciphertext
+    let max_len = ciphertexts.iter().map(|ct| ct.len()).max().unwrap();
 
-    for i in 0..max_length {
-        let mut frequency = [0u32; 256];
+    // Allocate space for the key
+    let mut key = vec![0u8; max_len];
+
+    // Frequency analysis to find the key
+    for i in 0..max_len {
+        let mut freq = [0; 256];
         for ct in &ciphertexts {
-            let bytes = hex_to_bytes(ct);
-            if i < bytes.len() {
-                frequency[bytes[i] as usize] += 1;
+            if i < ct.len() {
+                freq[ct[i] as usize] += 1;
             }
         }
-
-        // Determine the most likely key byte by trying common characters
-        for &common_char in &common_chars {
-            let likely_byte = frequency.iter().enumerate().max_by_key(|&(_, &count)| count).unwrap().0 as u8;
-            key[i] = likely_byte ^ common_char;
-            let decrypted = ciphertexts.iter().map(|ct| {
-                let ciphertext_bytes = hex_to_bytes(ct);
-                xor_decrypt(&ciphertext_bytes, &key)
-            }).collect::<Vec<_>>();
-
-            // Check if the decrypted text looks plausible (contains valid UTF-8 sequences)
-            if decrypted.iter().all(|d| str::from_utf8(d).is_ok()) {
-                break;
-            }
-        }
+        // Assume the most frequent byte is space (0x20)
+        let (max_byte, _) = freq.iter().enumerate().max_by_key(|&(_, &count)| count).unwrap();
+        key[i] = max_byte as u8 ^ 0x20;
     }
 
-    // Decrypt all ciphertexts using the derived key
-    for ct in ciphertexts {
-        let ciphertext_bytes = hex_to_bytes(ct);
-        let plaintext_bytes = xor_decrypt(&ciphertext_bytes, &key);
-        let plaintext = str::from_utf8(&plaintext_bytes).unwrap_or("<invalid utf-8>");
-        println!("{}", plaintext);
+    // Decrypt the ciphertexts using the recovered key
+    for (idx, ct) in ciphertexts.iter().enumerate() {
+        let plaintext: Vec<u8> = ct.iter().enumerate().map(|(i, &byte)| byte ^ key[i]).collect();
+        println!("Message {}: {}", idx + 1, String::from_utf8_lossy(&plaintext));
     }
+
+    // Print the key as a hex string
+    let hex_key: String = key.iter().map(|byte| format!("{:02x}", byte)).collect();
+    println!("Recovered key: {}", hex_key);
 }
