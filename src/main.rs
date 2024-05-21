@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::str;
 
 fn hex_to_bytes(hex: &str) -> Vec<u8> {
@@ -12,13 +13,77 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
 fn xor_decrypt(ciphertext: &[u8], key: &[u8]) -> Vec<u8> {
     ciphertext
         .iter()
-        .zip(key.iter().cycle())
-        .map(|(&c, &k)| c ^ k)
+        .zip(key.iter())
+        .map(|(c, k)| c ^ k)
         .collect()
 }
 
+fn score_decryption(decrypted: &[u8]) -> f32 {
+    let english_frequencies = english_char_frequency();
+    let mut score = 0.0;
+
+    for byte in decrypted {
+        let ch = *byte as char;
+        if english_frequencies.contains_key(&ch) {
+            score += english_frequencies[&ch];
+        }
+    }
+    score
+}
+
+fn english_char_frequency() -> HashMap<char, f32> {
+    let mut frequencies = HashMap::new();
+    frequencies.insert(' ', 15.00);
+    frequencies.insert('!', 0.50);
+    frequencies.insert(',', 1.00);
+    frequencies.insert('.', 1.00);
+    frequencies.insert('?', 0.50);
+    frequencies.insert('a', 8.16);
+    frequencies.insert('b', 1.49);
+    frequencies.insert('c', 2.42);
+    frequencies.insert('d', 4.32);
+    frequencies.insert('e', 12.70);
+    frequencies.insert('f', 2.09);
+    frequencies.insert('g', 1.63);
+    frequencies.insert('h', 6.02);
+    frequencies.insert('i', 7.00);
+    frequencies.insert('j', 0.10);
+    frequencies.insert('k', 0.78);
+    frequencies.insert('l', 4.00);
+    frequencies.insert('m', 2.09);
+    frequencies.insert('n', 6.24);
+    frequencies.insert('o', 7.57);
+    frequencies.insert('p', 1.52);
+    frequencies.insert('q', 0.11);
+    frequencies.insert('r', 5.99);
+    frequencies.insert('s', 6.24);
+    frequencies.insert('t', 9.06);
+    frequencies.insert('u', 2.49);
+    frequencies.insert('v', 0.98);
+    frequencies.insert('w', 1.98);
+    frequencies.insert('x', 0.17);
+    frequencies.insert('y', 1.59);
+    frequencies.insert('z', 0.07);
+
+    frequencies
+}
+
+fn break_single_xor(ciphertext: &[u8]) -> (Vec<u8>, f32) {
+    let mut best_key = vec![0; ciphertext.len()];
+    let mut best_score = f32::MIN;
+    for key_byte in 0..=255 {
+        let key = vec![key_byte; ciphertext.len()];
+        let decrypted = xor_decrypt(ciphertext, &key);
+        let score = score_decryption(&decrypted);
+        if score > best_score {
+            best_score = score;
+            best_key = key;
+        }
+    }
+    (best_key, best_score)
+}
+
 fn main() {
-    // Provided ciphertexts
     let ciphertexts = vec![
         "160111433b00035f536110435a380402561240555c526e1c0e431300091e4f04451d1d490d1c49010d000a0a4510111100000d434202081f0755034f13031600030d0204040e",
         "050602061d07035f4e3553501400004c1e4f1f01451359540c5804110c1c47560a1415491b06454f0e45040816431b144f0f4900450d1501094c1b16550f0b4e151e03031b450b4e020c1a124f020a0a4d09071f16003a0e5011114501494e16551049021011114c291236520108541801174b03411e1d124554284e141a0a1804045241190d543c00075453020a044e134f540a174f1d080444084e01491a090b0a1b4103570740",
@@ -31,41 +96,46 @@ fn main() {
         "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     ];
 
-    let max_length = ciphertexts.iter().map(|c| c.len()).max().unwrap();
-    let mut key = vec![0; max_length];
+    let mut key = vec![0; ciphertexts[0].len()];
 
-    for i in 0..max_length {
-        let mut frequency_map = vec![0; 128];
-
-        // Iterate over each ciphertext
+    for i in 0..key.len() {
+        let mut combined_ciphertext = Vec::new();
         for ct in &ciphertexts {
             let bytes = hex_to_bytes(ct);
             if i < bytes.len() {
-                // Increment the frequency count for each byte XORed with a possible key byte
-                for key_byte in 0..=127 {
-                    let decrypted_byte = bytes[i] ^ key_byte as u8;
-                    if decrypted_byte.is_ascii_alphabetic() || decrypted_byte.is_ascii_whitespace()
-                    {
-                        frequency_map[key_byte as usize] += 1;
-                    }
-                }
+                combined_ciphertext.extend_from_slice(&bytes[i..i + 1]);
             }
         }
-        let best_key_byte = frequency_map
-            .iter()
-            .enumerate()
-            .max_by_key(|&(_, &count)| count)
-            .unwrap()
-            .0 as u8;
-
-        key[i] = best_key_byte;
+        let (best_key_byte, _) = break_single_xor(&combined_ciphertext);
+        key[i] = best_key_byte[0];
     }
 
-    // Decrypt all ciphertexts using the derived key
-    for ct in &ciphertexts {
-        let ciphertext_bytes = hex_to_bytes(ct);
-        let plaintext_bytes = xor_decrypt(&ciphertext_bytes, &key);
-        let plaintext = str::from_utf8(&plaintext_bytes).unwrap_or("<invalid utf-8>");
-        println!("{}", plaintext);
+    let valid_ascii_bytes: Vec<u8> = key
+        .clone()
+        .into_iter()
+        .filter(|&b| b >= 32 && b <= 126)
+        .collect();
+
+    let bytes = hex_to_bytes(ciphertexts.last().unwrap());
+    let decrypted = xor_decrypt(&bytes, &valid_ascii_bytes);
+    let result = String::from_utf8_lossy(&decrypted);
+    println!("Decrypted text:\n{}", result);
+
+    // Based on the last line of decrypted outputs, the first statement in the Bitcoin whitepaper expected to be the key
+    let key = "Bitcoin: A purely peer-to-peer version of electronic cash would allow online payments to be sent directly from one party to another without going through a financial institution.";
+
+    println!("\nDecrypted texts:");
+    for ciphertext in &ciphertexts {
+        let bytes = hex_to_bytes(ciphertext);
+        let decrypted = xor_decrypt(&bytes, &key.as_bytes());
+        let result = String::from_utf8_lossy(&decrypted);
+        println!("{}", result);
     }
+
+    let final_ciphertext = "1f3cb1f3e01f3fd1f3ea1f3e61f3e01f3e71f3b31f3a91f3c81f3a91f3f91f3fc1f3fb1f3ec1f3e51f3f01f3a91f3f91f3ec1f3ec526e1b014a020411074c17111b1c071c4e4f0146430d0d08131d1d010707040017091648461e1d0618444f074c010e19594f0f1f1a07024e1d041719164e1c1652114f411645541b004e244f080213010c004c3b4c0911040e480e070b00310213101c4d0d4e00360b4f151a005253184913040e115454084f010f114554111d1a550f0d520401461f3e01f3e71f3e81f3e71f3ea1f3e01f3e81f3e51f3a91f3e01f3e71f3fa1f3fd1f3e01f3fd1f3fc1f3fd1f3e01f3e61f3e71f3a7";
+    let clean_ciphertext = final_ciphertext.replace("1f3", "");
+    let bytes = hex_to_bytes(&clean_ciphertext);
+    let decrypted = xor_decrypt(&bytes, &key.as_bytes());
+    let result = String::from_utf8_lossy(&decrypted);
+    println!("\nFinal text:\n{}", result);
 }
